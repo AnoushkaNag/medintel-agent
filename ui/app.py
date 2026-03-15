@@ -1,98 +1,185 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
 import sys
 import os
 
 # allow imports from project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from utils.helpers import enrich_specialties
+from analysis.ai_query_engine import answer_query
+from analysis.anomaly_detection import detect_anomalies
 
-
-# ------------------------------------------------
-# PAGE CONFIG
-# ------------------------------------------------
+DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "structured_capabilities_geo.csv"))
 
 st.set_page_config(layout="wide")
 
 st.title("MedIntel – Bridging Medical Deserts")
 
+# ----------------------------------------------------------
+# SYSTEM OVERVIEW (NEW)
+# ----------------------------------------------------------
+
+st.markdown(
+"""
+MedIntel is an AI healthcare intelligence platform that:
+
+• Extracts structured medical capabilities from facility reports  
+• Detects healthcare access gaps across regions  
+• Identifies medical deserts  
+• Recommends doctor deployment strategies  
+• Audits facility capability claims  
+
+The system transforms messy healthcare data into actionable intelligence
+for NGOs and healthcare planners.
+"""
+)
+
 tabs = st.tabs([
     "Facility Map",
     "Healthcare Gaps",
     "Recommendations",
+    "AI Planner",
+    "AI Data Auditor",
     "Dataset Explorer"
 ])
 
+# ----------------------------------------------------------
+# LOAD DATA
+# ----------------------------------------------------------
 
-# ==================================================
+try:
+    df = pd.read_csv(DATA_PATH)
+except:
+    st.error("Dataset could not be loaded.")
+    st.stop()
+
+# ----------------------------------------------------------
+# REGION CLEANING (NEW)
+# ----------------------------------------------------------
+
+def clean_region(region):
+
+    if not isinstance(region, str):
+        return "Unknown"
+
+    region = region.lower()
+
+    region = region.replace(" region", "")
+    region = region.replace(" municipality", "")
+    region = region.replace(" district", "")
+
+    region = region.strip()
+
+    return region.title()
+
+
+df["region"] = df["region"].apply(clean_region)
+
+# ----------------------------------------------------------
+# IMPACT ESTIMATION FUNCTION (NEW)
+# ----------------------------------------------------------
+
+def estimate_impact(region):
+
+    region_df = df[df["region"] == region]
+
+    facility_count = len(region_df)
+
+    population_estimate = facility_count * 25000
+
+    return population_estimate
+
+# ----------------------------------------------------------
 # TAB 1 — FACILITY MAP
-# ==================================================
+# ----------------------------------------------------------
 
 with tabs[0]:
 
     st.header("Healthcare Facility Coverage")
-    st.caption("Facility density across Ghana")
 
-    df = pd.read_csv("data/structured_capabilities_geo.csv")
+    map_mode = st.toggle("Dark Mode Map", value=True)
 
-    df = enrich_specialties(df)
+    if map_mode:
+        map_style = "carto-darkmatter"
+        heat_colors = "Turbo"
+        marker_color = "cyan"
+    else:
+        map_style = "carto-positron"
+        heat_colors = "YlOrRd"
+        marker_color = "blue"
 
-    df = df.dropna(subset=["lat", "lon"])
-
-    # -------------------------------
-    # Density Heatmap
-    # -------------------------------
-
-    heatmap = go.Densitymapbox(
-        lat=df["lat"],
-        lon=df["lon"],
-        z=[1] * len(df),
-        radius=65,
-        colorscale="Turbo",
-        opacity=0.75,
-        hoverinfo="skip"
-    )
-
-    # -------------------------------
-    # Hover Details Layer
-    # -------------------------------
-
-    hover_layer = go.Scattermapbox(
-        lat=df["lat"],
-        lon=df["lon"],
-        mode="markers",
-        marker=dict(
-            size=6,
-            color="rgba(0,0,0,0)"
-        ),
-        text=df.apply(
-            lambda row: (
-                f"<b>{row['facility']}</b><br>"
-                f"Region: {row['region']}<br>"
-                f"Specialties: {row['specialties']}"
-            ),
-            axis=1
-        ),
-        hoverinfo="text",
-        showlegend=False
-    )
+    map_df = df.dropna(subset=["lat", "lon"])
 
     fig = go.Figure()
 
-    fig.add_trace(heatmap)
-    fig.add_trace(hover_layer)
+    # HEATMAP
+    fig.add_trace(
+        go.Densitymapbox(
+            lat=map_df["lat"],
+            lon=map_df["lon"],
+            radius=35,
+            colorscale=heat_colors,
+            opacity=0.65,
+            name="Facility Density"
+        )
+    )
+
+    # FACILITY MARKERS WITH DETAILS
+    fig.add_trace(
+        go.Scattermapbox(
+            lat=map_df["lat"],
+            lon=map_df["lon"],
+            mode="markers",
+            marker=dict(size=6, color=marker_color),
+            text=map_df["facility"],
+            customdata=map_df[["region", "specialties"]],
+            hovertemplate=
+                "<b>%{text}</b><br>" +
+                "Region: %{customdata[0]}<br>" +
+                "Specialties: %{customdata[1]}<br>" +
+                "<extra></extra>",
+            name="Facilities"
+        )
+    )
+
+    # MEDICAL DESERT DETECTION
+    region_counts = (
+        map_df.groupby("region")
+        .size()
+        .reset_index(name="facility_count")
+    )
+
+    desert_regions = region_counts[region_counts["facility_count"] <= 2]
+
+    desert_points = map_df[map_df["region"].isin(desert_regions["region"])]
+
+    if not desert_points.empty:
+
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=desert_points["lat"],
+                lon=desert_points["lon"],
+                mode="markers",
+                marker=dict(
+                    size=12,
+                    color="red",
+                    opacity=0.6
+                ),
+                text=desert_points["region"],
+                name="Medical Desert"
+            )
+        )
 
     fig.update_layout(
         mapbox=dict(
-            style="carto-darkmatter",
-            center=dict(lat=7.9, lon=-1.0),
+            style=map_style,
+            center=dict(lat=7.9465, lon=-1.0232),
             zoom=6
         ),
         margin=dict(l=0, r=0, t=0, b=0),
-        height=650
+        height=700
     )
 
     st.plotly_chart(
@@ -101,83 +188,183 @@ with tabs[0]:
         config={"scrollZoom": True}
     )
 
-
-# ==================================================
-# TAB 2 — HEALTHCARE GAPS
-# ==================================================
+# ----------------------------------------------------------
+# TAB 2 — GAP ANALYSIS
+# ----------------------------------------------------------
 
 with tabs[1]:
 
     st.header("Healthcare Gap Analysis")
 
-    gap_df = pd.read_csv("data/region_density.csv")
+    specialties = [
+        "cardiology",
+        "pediatrics",
+        "radiology",
+        "emergencymedicine",
+        "generalsurgery"
+    ]
 
-    gap_df["gap_score"] = gap_df["facility_count"].max() - gap_df["facility_count"]
+    gap_data = []
+
+    regions = df["region"].dropna().unique()
+
+    for region in regions:
+
+        region_df = df[df["region"] == region]
+
+        missing_count = 0
+
+        for s in specialties:
+
+            if not region_df["specialties"].astype(str).str.contains(s, case=False).any():
+                missing_count += 1
+
+        gap_data.append({
+            "region": region,
+            "gap_score": missing_count
+        })
+
+    gap_df = pd.DataFrame(gap_data)
 
     fig = px.bar(
         gap_df.sort_values("gap_score", ascending=False),
         x="region",
         y="gap_score",
         color="gap_score",
-        title="Regions with Largest Healthcare Gaps",
-        color_continuous_scale="Turbo"
+        title="Healthcare Capability Gap by Region"
     )
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-        config={"scrollZoom": True}
-    )
+    st.plotly_chart(fig, use_container_width=True)
 
-
-# ==================================================
+# ----------------------------------------------------------
 # TAB 3 — RECOMMENDATIONS
-# ==================================================
+# ----------------------------------------------------------
 
 with tabs[2]:
 
     st.header("Healthcare Intervention Recommendations")
 
-    gap_df = pd.read_csv("data/region_density.csv")
-    facilities_df = pd.read_csv("data/structured_capabilities_geo.csv")
+    regions = df["region"].dropna().unique()
 
-    gap_df["gap_score"] = gap_df["facility_count"].max() - gap_df["facility_count"]
+    for r in regions[:10]:
 
-    high_gap = gap_df.sort_values("gap_score", ascending=False).head(5)
-
-    for _, row in high_gap.iterrows():
-
-        region = row["region"]
-
-        st.subheader(region.upper())
+        st.subheader(r)
 
         st.write("High healthcare gap detected")
 
-        region_facilities = facilities_df[
-            facilities_df["region"].str.contains(region, case=False, na=False)
-        ]
+        facility = df[df["region"] == r]["facility"].iloc[0]
 
-        if len(region_facilities) > 0:
+        st.write("Recommended facility for expansion:")
 
-            suggested = region_facilities.sample(1).iloc[0]["facility"]
+        st.success(facility)
 
-            st.write("Recommended facility for expansion:")
-            st.write(suggested)
-
-        else:
-
-            st.write("Recommended facility for expansion:")
-            st.write("New facility recommended")
-
-
-# ==================================================
-# TAB 4 — DATASET EXPLORER
-# ==================================================
+# ----------------------------------------------------------
+# TAB 4 — AI PLANNER
+# ----------------------------------------------------------
 
 with tabs[3]:
 
-    st.header("Dataset Explorer")
+    st.header("AI Healthcare Planning Assistant")
 
-    df = pd.read_csv("data/structured_capabilities_geo.csv")
+    query = st.text_input("Ask a healthcare planning question")
+
+    if query:
+
+        result = answer_query(query)
+
+        # FACILITY SEARCH
+        if result["type"] == "facility_search":
+
+            st.subheader("Relevant Facilities")
+
+            for f in result["facilities"]:
+                st.write(f)
+
+        # GAP ANALYSIS
+        elif result["type"] == "gap":
+
+            st.subheader(f"Regions lacking {result['specialty']}")
+
+            for r in result["regions"]:
+                st.write(r)
+
+        # DEPLOYMENT
+        elif result["type"] == "deployment":
+
+            st.subheader("Deployment Recommendations")
+
+            for s in result["suggestions"]:
+
+                region = s.replace("Deploy cardiology specialist to ", "")
+
+                st.write(s)
+
+                impact = estimate_impact(region)
+
+                st.info(f"Estimated population affected: {impact:,}")
+
+        # REASONING
+        if "reasoning" in result:
+
+            st.subheader("AI Reasoning")
+
+            for step in result["reasoning"]:
+                st.write(step)
+
+        # CITATIONS
+        if "citations" in result:
+
+            st.subheader("Sources")
+
+            for c in result["citations"]:
+
+                if "facility" in c:
+                    st.write("Facility:", c["facility"])
+
+                if "region" in c:
+                    st.write("Region:", c["region"])
+
+                if "specialties" in c:
+                    st.write("Specialties:", c["specialties"])
+
+                st.write("---")
+
+# ----------------------------------------------------------
+# TAB 5 — AI DATA AUDITOR
+# ----------------------------------------------------------
+
+with tabs[4]:
+
+    st.header("AI Healthcare Data Auditor")
+
+    st.write(
+        "Detect facilities with suspicious or inconsistent medical capability claims."
+    )
+
+    anomalies = detect_anomalies()
+
+    if len(anomalies) == 0:
+
+        st.success("No anomalies detected in dataset.")
+
+    else:
+
+        for a in anomalies[:50]:
+
+            st.warning(
+                f"""
+⚠ **Facility:** {a["facility"]}
+
+Issue: {a["issue"]}
+"""
+            )
+
+# ----------------------------------------------------------
+# TAB 6 — DATASET EXPLORER
+# ----------------------------------------------------------
+
+with tabs[5]:
+
+    st.header("Dataset Explorer")
 
     st.dataframe(df)
