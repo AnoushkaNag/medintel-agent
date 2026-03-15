@@ -4,6 +4,17 @@ MedIntel is an AI-powered healthcare intelligence platform that analyzes healthc
 
 The system transforms messy healthcare facility reports into structured intelligence and enables NGOs, policymakers, and planners to answer questions like:
 
+Why MedIntel Matters
+
+Healthcare planning often relies on manual analysis of fragmented reports.
+
+MedIntel automates this process by transforming facility descriptions into structured intelligence and identifying healthcare gaps across regions.
+
+This enables faster decisions on:
+• resource allocation
+• specialist deployment
+• infrastructure investment
+
 Which regions lack cardiology services?
 
 Where should doctors be deployed?
