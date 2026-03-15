@@ -1,11 +1,13 @@
-import pandas as pd
-import sys
 import os
+import sys
+
+import pandas as pd
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from rag.retrieval import search
+from agents.healthcare_agent import run_healthcare_agent
 from analysis.query_planner import find_regions_missing_specialty, suggest_deployment
+from rag.retrieval import search
 
 DATA_PATH = "data/structured_capabilities_geo.csv"
 
@@ -22,26 +24,26 @@ SPECIALTY_MAP = {
     "imaging": "radiology",
     "surgery": "generalsurgery",
     "obstetric": "gynecologyandobstetrics",
-    "maternal": "gynecologyandobstetrics"
+    "maternal": "gynecologyandobstetrics",
 }
 
 
 def detect_specialty(query):
 
-    for k in SPECIALTY_MAP:
-        if k in query:
-            return SPECIALTY_MAP[k]
+    for keyword, specialty in SPECIALTY_MAP.items():
+        if keyword in query:
+            return specialty
 
     return None
 
 
-def answer_query(query):
+def heuristic_answer_query(query):
 
     query = query.lower()
 
     try:
         df = pd.read_csv(DATA_PATH)
-    except:
+    except Exception:
         return {"type": "error", "message": "Dataset not found"}
 
     reasoning = []
@@ -49,30 +51,20 @@ def answer_query(query):
 
     specialty = detect_specialty(query)
 
-    # ---------------------------------------------------
-    # GAP QUERIES
-    # ---------------------------------------------------
-
     if "lack" in query or "missing" in query:
 
         if specialty:
 
-            reasoning.append("Step 1 — Detect specialty requested")
-
+            reasoning.append("Used heuristic specialty detection")
             regions = find_regions_missing_specialty(specialty)
-
-            reasoning.append("Step 2 — Identify regions lacking this specialty")
+            reasoning.append("Checked dataset coverage by region")
 
             return {
                 "type": "gap",
                 "specialty": specialty,
                 "regions": regions,
-                "reasoning": reasoning
+                "reasoning": reasoning,
             }
-
-    # ---------------------------------------------------
-    # DEPLOYMENT QUERIES
-    # ---------------------------------------------------
 
     if (
         "deploy" in query
@@ -83,66 +75,67 @@ def answer_query(query):
 
         if specialty:
 
-            reasoning.append("Step 1 — Detect specialty for deployment")
-
+            reasoning.append("Used heuristic specialty detection")
             regions = find_regions_missing_specialty(specialty)
-
-            reasoning.append("Step 2 — Identify regions lacking the specialty")
-
             suggestions = suggest_deployment(specialty)
-
-            reasoning.append("Step 3 — Generate deployment recommendations")
+            reasoning.append("Generated rule-based deployment suggestions")
 
             return {
                 "type": "deployment",
                 "specialty": specialty,
                 "regions": regions,
                 "suggestions": suggestions,
-                "reasoning": reasoning
+                "reasoning": reasoning,
             }
 
-    # ---------------------------------------------------
-    # FACILITY SEARCH
-    # ---------------------------------------------------
-
-    reasoning.append("Step 1 — Perform semantic facility search")
+    reasoning.append("Ran facility search over the capability index")
 
     results = search(query)
-
     facilities = []
 
-    for r in results:
+    for result in results:
 
-        text = r["document"]
-
-        lines = text.split("\n")
-
+        text = result["document"]
         facility_name = "Unknown"
 
-        for line in lines:
-
+        for line in text.split("\n"):
             if "Facility:" in line:
                 facility_name = line.replace("Facility:", "").strip()
+                break
 
         facilities.append(facility_name)
 
-    reasoning.append("Step 2 — Match facilities with dataset records")
-
     matched = df[df["facility"].isin(facilities)]
+    reasoning.append("Matched retrieved facilities back to dataset rows")
 
     for _, row in matched.head(5).iterrows():
-
         citations.append({
             "facility": row["facility"],
             "region": row["region"],
-            "specialties": row["specialties"]
+            "specialties": row["specialties"],
         })
-
-    reasoning.append("Step 3 — Return most relevant facilities")
 
     return {
         "type": "facility_search",
         "facilities": facilities[:5],
         "reasoning": reasoning,
-        "citations": citations
+        "citations": citations,
     }
+
+
+def answer_query(query):
+
+    agent_result = run_healthcare_agent(query)
+
+    if agent_result.get("ok"):
+        return agent_result["response"]
+
+    fallback = heuristic_answer_query(query)
+
+    if agent_result.get("error"):
+        fallback.setdefault("reasoning", []).insert(
+            0,
+            f"ReAct agent unavailable, fell back to heuristic planner: {agent_result['error']}",
+        )
+
+    return fallback

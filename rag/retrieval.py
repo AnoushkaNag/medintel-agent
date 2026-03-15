@@ -1,9 +1,29 @@
 import pickle
+import os
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+INDEX_FILES = [
+    "rag/vectorizer.pkl",
+    "rag/embeddings.pkl",
+    "rag/documents.pkl",
+]
+
+
+def ensure_index():
+
+    if all(os.path.exists(path) for path in INDEX_FILES):
+        return
+
+    from rag.embeddings import create_embeddings
+
+    create_embeddings()
+
+
 def load_index():
+
+    ensure_index()
 
     with open("rag/vectorizer.pkl", "rb") as f:
         vectorizer = pickle.load(f)
