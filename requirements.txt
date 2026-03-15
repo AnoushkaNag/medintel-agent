@@ -1,26 +1,7 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Virtual environments
-venv/
-.env
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# Streamlit
-.streamlit/
-
-# Logs
-*.log
-
-# Large data (optional)
-*.parquet
-*.pkl
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+sentence-transformers
+faiss-cpu
